@@ -9,101 +9,105 @@ using Microsoft.CodeAnalysis.Emit;
 using Microsoft.CodeAnalysis.Text;
 using Newtonsoft.Json;
 
+const string GENERATED_FOLDER = "generated";
+const string FUNCTIONS_STORE = "functions.json";
+
+Console.WriteLine("Compile at runtime and debug");
+Console.WriteLine("============================");
+
 
 while (true)
 {
-    var TABELA_FUNCTIONS = JsonConvert.DeserializeObject<IList<FnRecord>>(File.ReadAllText("functions.json"));
+    var FUNCTION_REPOSITORY = JsonConvert.DeserializeObject<IList<FnRecord>>(File.ReadAllText(FUNCTIONS_STORE));
 
-    Console.WriteLine("Funções disponíveis: ");
-    foreach (var item in TABELA_FUNCTIONS!)
+    FnRecord? functionItem = null;
+    while (functionItem == null)
     {
-        Console.WriteLine(item.Name);
+
+        Console.WriteLine("Available functions: ");
+        foreach (var item in FUNCTION_REPOSITORY!)
+            Console.WriteLine(" - " + item.Name);
+
+        Console.WriteLine("Enter the name of the function to execute: ");
+        var functionNameToExecute = Console.ReadLine();
+        functionNameToExecute ??= "";
+        functionNameToExecute = functionNameToExecute.Trim();
+
+        FUNCTION_REPOSITORY = JsonConvert.DeserializeObject<IList<FnRecord>>(File.ReadAllText(FUNCTIONS_STORE));
+
+        functionItem = FUNCTION_REPOSITORY
+            .SingleOrDefault(
+                x => x.Name.Equals(functionNameToExecute, StringComparison.OrdinalIgnoreCase)
+            );
+
+        if (functionItem != null)
+            break;
     }
+    Console.WriteLine();
 
-    Console.WriteLine("Digite o nome da função para executar: ");
-    var functionNameToExecute = Console.ReadLine();
+    Directory.CreateDirectory(GENERATED_FOLDER);
 
-    TABELA_FUNCTIONS = JsonConvert.DeserializeObject<IList<FnRecord>>(File.ReadAllText("functions.json"));
-
-    var function = TABELA_FUNCTIONS.SingleOrDefault(x => x.Name == functionNameToExecute);
-
-    if (function == null)
-    {
-        Console.WriteLine("funcao nao encontrada");
-        continue;
-    }
-
-
-    Directory.CreateDirectory("generated");
-
-    var fnAssemblyPath = $"generated/{function.Name}.dll";
-    var fnAssemblyPdbPath = $"generated/{function.Name}.pdb";
-    var sourceFilePath = $"generated/{function.Name}.cs";
-
-
+    var fnAssemblyPath = $"{GENERATED_FOLDER}/{functionItem.Name}.dll";
+    var fnAssemblyPdbPath = $"{GENERATED_FOLDER}/{functionItem.Name}.pdb";
+    var sourceFilePath = $"{GENERATED_FOLDER}/{functionItem.Name}.cs";
 
     if (!File.Exists(fnAssemblyPath))
     {
-        File.WriteAllLines(sourceFilePath, function.Source!);
-        Console.WriteLine("Criando nova versao...");
-        CreateAssembly(fnAssemblyPath, sourceFilePath);
+        File.WriteAllLines(sourceFilePath, functionItem.Source!);
+        var success = CreateAssembly(fnAssemblyPath, sourceFilePath);
+        if (!success)
+        {
+            Console.WriteLine("Failed to create assembly. Check the errors above.");
+            Console.ReadKey();
+            continue;
+        }
     }
 
-    var classFullQualifiedName = $"CustomCode.{functionNameToExecute}";
+    var classFullQualifiedName = $"CustomCode.{functionItem.Name}";
 
-    
-
-    Type functionClassType = GetAssembly(fnAssemblyPath,fnAssemblyPdbPath)
+    Type functionClassType = GetAssembly(fnAssemblyPath, fnAssemblyPdbPath)
             .GetType(classFullQualifiedName)
-                    ?? throw new ArgumentException("Classe nao exite:" + classFullQualifiedName);
+                    ?? throw new ArgumentException("Class does not exist:" + classFullQualifiedName);
 
     var field = functionClassType
         .GetField("VERSION", BindingFlags.Public | BindingFlags.Static)
-            ?? throw new ArgumentException("Membro estatico VERSION nao existe");
+            ?? throw new ArgumentException("Static member VERSION does not exist in class:" + classFullQualifiedName);
 
     var cachedVersion = (string)(field.GetValue(null) ?? "");
 
-    if (cachedVersion != function.Version)
+    if (cachedVersion != functionItem.Version)
     {
-        foreach (var file in Directory.EnumerateFiles("./", $"generated/{function.Name}.*")) {
+        foreach (var file in Directory.EnumerateFiles("./", $"{GENERATED_FOLDER}/{functionItem.Name}.*"))
+        {
             File.Delete(file);
         }
 
-        File.WriteAllLines(sourceFilePath, function.Source!);
+        File.WriteAllLines(sourceFilePath, functionItem.Source!);
 
-        Console.WriteLine("Versao do banco diferente da versao compilada. Gerando nova versao.");
+        Console.WriteLine("Database version is different from the compiled version. Generating new version.");
         CreateAssembly(fnAssemblyPath, sourceFilePath);
-        functionClassType = GetAssembly(fnAssemblyPath,fnAssemblyPdbPath)
+        functionClassType = GetAssembly(fnAssemblyPath, fnAssemblyPdbPath)
             .GetType(classFullQualifiedName)
-        ?? throw new ArgumentException(classFullQualifiedName);
+        ?? throw new ArgumentException("Class does not exist:" + classFullQualifiedName);
     }
 
     var executeMethod = functionClassType.GetMethod("Run", BindingFlags.Public | BindingFlags.Static)
-                ?? throw new ArgumentException("Método Run nao existe");
+                ?? throw new ArgumentException("Method Run does not exist in class:" + classFullQualifiedName);
     string result = (string)(executeMethod.Invoke(null, new object[] { DateTime.Now.ToString() }) ?? "");
 
-    Console.WriteLine("Resultado: " + result);
+    Console.WriteLine("Function returned value: " + result);
+
+    Console.WriteLine();
 }
 
-Assembly GetAssembly(string fnAssemblyPath, string fnAssemblyPdbPath) {
-    
-    // using var assemblyStream = new FileStream(fnAssemblyPath, FileMode.Open, FileAccess.Read);
-    // using var pdbStream = new FileStream(fnAssemblyPdbPath, FileMode.Open, FileAccess.Read);
-    
-
-
-
-    return Assembly.Load(File.ReadAllBytes(fnAssemblyPath), File.ReadAllBytes(fnAssemblyPdbPath));
-    // return AssemblyLoadContext.Default.LoadFromStream(
-    //     assemblyStream, 
-    //     pdbStream 
-    // );
-
-}
-
-void CreateAssembly(string outputFilePath, string sourceCodeFile)
+Assembly GetAssembly(string fnAssemblyPath, string fnAssemblyPdbPath)
 {
+    return Assembly.Load(File.ReadAllBytes(fnAssemblyPath), File.ReadAllBytes(fnAssemblyPdbPath));
+}
 
+bool CreateAssembly(string outputFilePath, string sourceCodeFile)
+{
+    Console.WriteLine("Creating new version...");
 
     var assemblyName = Path.GetFileName(outputFilePath);
     var code = File.ReadAllText(sourceCodeFile);
@@ -113,6 +117,7 @@ void CreateAssembly(string outputFilePath, string sourceCodeFile)
         code,
         encoding: System.Text.Encoding.UTF8,
         path: sourceCodeFile);
+
     CSharpCompilation compilation = CSharpCompilation.Create(
         assemblyName,
         new[] { syntaxTree },
@@ -162,15 +167,21 @@ void CreateAssembly(string outputFilePath, string sourceCodeFile)
         File.WriteAllBytes(outputFilePath, peStream.ToArray());
         pdbStream.Seek(0, SeekOrigin.Begin);
         File.WriteAllBytes(Path.ChangeExtension(outputFilePath, "pdb"), pdbStream.ToArray());
-        return;
+        return true;
     }
 
-    foreach (var item in result.Diagnostics)
+    if (result.Diagnostics.Count() > 0)
     {
-        Console.WriteLine(item.ToString());
+        var currentColor = Console.ForegroundColor;
+        Console.ForegroundColor = ConsoleColor.Red;
+        Console.WriteLine("Compilation failed with the following diagnostics:");
+        foreach (var item in result.Diagnostics)
+        {
+            Console.WriteLine(item.ToString());
+        }
+        Console.ForegroundColor = currentColor;
     }
 
-    Console.WriteLine("Erro na compilação. Cheque os erros acima.");
-
-
+    Console.WriteLine("Compilation error. Check the errors above.");
+    return false;
 }
