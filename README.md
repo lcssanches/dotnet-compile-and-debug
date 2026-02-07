@@ -11,7 +11,7 @@ A .NET 8 demo that compiles and executes C# code at runtime with full debugging 
 
 ## How It Works
 
-1. Functions are defined in `functions.json` with name, version, and source code
+1. Functions are defined in `functions.json` with name, version, and source code (simulating a functions repository)
 2. On execution, the app compiles the source to a DLL in the `generated/` folder
 3. The assembly is loaded and the `Run` method is invoked
 4. If the version changes, the function is recompiled automatically
