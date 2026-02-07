@@ -1,4 +1,4 @@
-# Dynamic Compile and Debug
+# .NET Dynamic Compile and Debug
 
 A .NET 8 demo that compiles and executes C# code at runtime with full debugging support.
 
